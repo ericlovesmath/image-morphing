@@ -10,6 +10,11 @@ from scipy.spatial import Delaunay
 # --------------------------------------------------------------------------------------
 
 
+def read_points(path: str) -> np.ndarray:
+    """Read array of points of an CSV, reading verticies"""
+    return pd.read_csv(path, header=None).to_numpy()
+
+
 def read_image(path: str) -> np.ndarray:
     """Read an image an array of linear RGB radiance values ∈ [0,1]"""
     return np.array(Image.open(path), dtype=np.float32) / 255
@@ -101,7 +106,6 @@ def run_draw_mesh(fname: str):
     triangles = Delaunay(points)
 
     plt.imshow(numpy_to_image(img))
-    plt.scatter(points[:, 0], points[:, 1])
     plt.triplot(points[:, 0], points[:, 1], triangles.simplices, linewidth=1)
 
     plt.axis((0, 1000, 1000, 0))
@@ -110,17 +114,51 @@ def run_draw_mesh(fname: str):
 
 def run_verify_points():
     plt.axis((0, 1000, 1000, 0))
-    points1 = pd.read_csv(f"points/idina_menzel.csv", header=None).to_numpy()
-    points2 = pd.read_csv(f"points/jamie_muscato.csv", header=None).to_numpy()
+    points1 = read_points("points/idina_menzel.csv")
+    points2 = read_points("points/jamie_muscato.csv")
     for p1, p2 in zip(points1, points2):
         plt.plot(p1[0], p1[1], "bo", ms=2)
         plt.plot(p2[0], p2[1], "ro", ms=2)
         plt.pause(0.2)
 
+def run_average_mesh():
+    menzel = resize(read_image(f"imgs/idina_menzel.png"), (1000, 1000))
+    muscato = resize(read_image(f"imgs/jamie_muscato.png"), (1000, 1000))
+
+    menzel_points = read_points("points/idina_menzel.csv")
+    muscato_points = read_points("points/jamie_muscato.csv")
+    points = (menzel_points + muscato_points) / 2
+
+    border = []
+    for i in np.linspace(0, 1000, 9):
+        border.extend([[0, i], [1000, 1000 - i], [1000 - i, 0], [i, 1000]])
+    points = np.vstack([points, np.array(border)])
+    menzel_points = np.vstack([menzel_points, np.array(border)])
+    muscato_points = np.vstack([muscato_points, np.array(border)])
+
+    triangles = Delaunay(points)
+
+    plt.axis((0, 1000, 1000, 0))
+
+    plt.triplot(points[:, 0], points[:, 1], triangles.simplices)
+    plt.savefig(f"out/average_mesh.png")
+    plt.show()
+
+    plt.triplot(menzel_points[:, 0], menzel_points[:, 1], triangles.simplices)
+    plt.imshow(numpy_to_image(menzel))
+    plt.savefig(f"out/average_idina_menzel_mesh.png")
+    plt.show()
+
+    plt.triplot(muscato_points[:, 0], muscato_points[:, 1], triangles.simplices)
+    plt.imshow(numpy_to_image(muscato))
+    plt.savefig(f"out/average_jamie_muscato_mesh.png")
+    plt.show()
+
 if __name__ == "__main__":
     # run_naive_cross_fade()
     # run_draw_points("idina_menzel")
     # run_draw_points("jamie_muscato")
+    # run_verify_points()
     # run_draw_mesh("idina_menzel")
     # run_draw_mesh("jamie_muscato")
-    run_verify_points()
+    run_average_mesh()
