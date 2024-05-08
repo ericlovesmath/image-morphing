@@ -154,6 +154,31 @@ def run_average_mesh():
     plt.savefig(f"out/average_jamie_muscato_mesh.png")
     plt.show()
 
+def run_triangle_transform():
+    src = np.array([[1, 1], [5, 3], [3, 5]])
+    dst = np.array([[6, 1], [7, 7], [3, 4]])
+
+    # M = np.vstack([dst.T, np.ones(3)]) @ np.linalg.inv(np.vstack([src.T, np.ones(3)]))
+    M = np.vstack([src.T, np.ones(3)]) @ np.linalg.inv(np.vstack([dst.T, np.ones(3)]))
+
+    # Generates 100 random points in `dst
+    x = np.sort(np.random.rand(2, 100), axis=0)
+    dst_points = np.column_stack([x[0], x[1] - x[0], 1.0 - x[1]]) @ dst
+
+    dst_points = np.vstack([dst_points.T, np.ones(100)])
+    src_points = M @ dst_points
+
+    plt.axis((0, 8, 0, 8))
+
+    for alpha in np.linspace(0, 1, 50, endpoint=True):
+        points = (1 - alpha) * src_points + alpha * dst_points
+        plt.clf()
+        plt.triplot(src[:, 0], src[:, 1], [[0, 1, 2]])
+        plt.triplot(dst[:, 0], dst[:, 1], [[0, 1, 2]])
+        plt.scatter(points[0], points[1], color="r")
+        plt.pause(0.05)
+
+
 if __name__ == "__main__":
     # run_naive_cross_fade()
     # run_draw_points("idina_menzel")
@@ -161,4 +186,5 @@ if __name__ == "__main__":
     # run_verify_points()
     # run_draw_mesh("idina_menzel")
     # run_draw_mesh("jamie_muscato")
-    run_average_mesh()
+    # run_average_mesh()
+    run_triangle_transform()
