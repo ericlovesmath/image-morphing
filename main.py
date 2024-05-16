@@ -174,10 +174,6 @@ def run_triangle_transform():
 
 
 def run_calculate_simplex_per_pixel():
-
-    # TODO: This is incorrect since it just doesn't use `muscato` for morphing
-    # at all, as scipy's Delaunay doesn't have a `find_simplex` alternative
-
     menzel = extend_border(read_points("points/idina_menzel.csv"))
     muscato = extend_border(read_points("points/jamie_muscato.csv"))
     points = (menzel + muscato) / 2
@@ -189,28 +185,34 @@ def run_calculate_simplex_per_pixel():
     for i in range(1000):
         for j in range(1000):
             pixels[triangles.find_simplex([i, j])].append([i, j])
+    pixels = [np.array(row) for row in pixels]
 
     dsts = [np.empty(1) for _ in range(N)]
     srcs = [np.empty(1) for _ in range(N)]
     for i in range(N):
-        src = menzel[triangles.simplices[i]]
-        dst = points[triangles.simplices[i]]
+        mid = points[triangles.simplices[i]]
 
-        M = np.vstack([src.T, np.ones(3)]) @ np.linalg.inv(np.vstack([dst.T, np.ones(3)]))
+        def point_mat(points: np.ndarray) -> np.ndarray:
+            return np.vstack([points.T, np.ones(points.shape[0])])
 
-        dst = np.vstack([np.array(pixels[i]).T, np.ones(len(pixels[i]))])
-        src = M @ dst
+        M = point_mat(menzel[triangles.simplices[i]]) @ np.linalg.inv(point_mat(mid))
+        srcs[i] = M @ point_mat(pixels[i])
 
-        dsts[i] = dst
-        srcs[i] = src
+        M = point_mat(muscato[triangles.simplices[i]]) @ np.linalg.inv(point_mat(mid))
+        dsts[i] = M @ point_mat(pixels[i])
 
-    for alpha in np.linspace(0, 1, 20, endpoint=True):
+    imgs = []
+    for i, alpha in enumerate(np.linspace(0, 1, 40, endpoint=True)):
         plt.clf()
         plt.axis((0, 1000, 1000, 0))
         for src, dst in zip(srcs, dsts):
             points = (1 - alpha) * src + alpha * dst
             plt.scatter(points[0], points[1], s=1)
-        plt.pause(1 if alpha == 0 or alpha == 1 else 0.02)
+        fname = f"out/triangle_transform/{i:03}.png"
+        plt.savefig(fname)
+        imgs.append(read_image(fname))
+
+    write_gif("out/triangle_transform.gif", imgs + imgs[::-1])
 
 
 if __name__ == "__main__":
