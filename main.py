@@ -1,3 +1,7 @@
+# The purpose of this script is to act as a testing ground and a place to
+# Quickly generate visualizations for reference. This is not the final code.
+
+from multiprocessing import Pool
 from typing import List, Tuple
 
 import matplotlib.pyplot as plt
@@ -5,6 +9,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.backend_bases import MouseButton
 from PIL import Image
+from scipy.ndimage import affine_transform
 from scipy.spatial import Delaunay
 
 # --------------------------------------------------------------------------------------
@@ -215,6 +220,227 @@ def run_calculate_simplex_per_pixel():
     write_gif("out/triangle_transform.gif", imgs + imgs[::-1])
 
 
+def run_transform_image():
+    a = 2 * np.pi / 3
+    M = np.array([[np.cos(a), -np.sin(a)], [np.sin(a), np.cos(a)]])
+
+    H, W, C = MUSCATO.shape
+
+    dst = np.zeros((H, W, C), dtype=np.float32)
+    center = np.array([H // 2, W // 2])
+    offset = center - np.dot(center, M)
+    for i in range(C):
+        dst[:, :, i] = affine_transform(
+            MUSCATO[:, :, i],
+            matrix=M.T,
+            order=1,
+            offset=offset,
+            cval=0.0,
+            output=np.float32,
+        )
+    plt.imshow(numpy_to_image(dst))
+    plt.show()
+
+
+def point_in_simplex(p, simplex):
+    # Uses Barycentric Coordinates to calculate
+    p0, p1, p2 = simplex
+
+    A = (
+        1
+        / 2
+        * (
+            -p1[1] * p2[0]
+            + p0[1] * (-p1[0] + p2[0])
+            + p0[0] * (p1[1] - p2[1])
+            + p1[0] * p2[1]
+        )
+    )
+    sign = -1 if A < 0 else 1
+    s = (
+        p0[1] * p2[0] - p0[0] * p2[1] + (p2[1] - p0[1]) * p[0] + (p0[0] - p2[0]) * p[1]
+    ) * sign
+    t = (
+        p0[0] * p1[1] - p0[1] * p1[0] + (p0[1] - p1[1]) * p[0] + (p1[0] - p0[0]) * p[1]
+    ) * sign
+
+    EPS = 1e-6
+
+    return s + EPS > 0 and t + EPS > 0 and (s + t) < 2 * A * sign + EPS
+
+
+def identify_simplex(point, points, simplicies):
+    for i, simplex in enumerate(simplicies):
+        if point_in_simplex(point, points[simplex]):
+            return i
+    exit(-1)
+
+
+def test_identify_simplex():
+    menzel = extend_border(read_points("points/idina_menzel.csv"))
+    muscato = extend_border(read_points("points/jamie_muscato.csv"))
+    points = (menzel + muscato) / 2
+
+    triangles = Delaunay(points)
+
+    test_points = 1000 * np.random.rand(10000, 2)
+    for point in test_points:
+        alg = identify_simplex(point, points, triangles.simplices)
+        delaunay = triangles.find_simplex(point)
+        assert alg == delaunay
+
+    print("identify_simplex works")
+
+
+def run_inv_sample_frame():
+    menzel = extend_border(read_points("points/idina_menzel.csv"))
+    muscato = extend_border(read_points("points/jamie_muscato.csv"))
+    points = (menzel + muscato) / 2
+    alpha = 0.3
+    target = (1 - alpha) * menzel + alpha * muscato
+
+    triangles = Delaunay(points)
+    N = len(triangles.simplices)
+
+    pixels = [[] for _ in range(N)]
+    for x in range(0, 1000, 10):
+        for y in range(0, 1000, 10):
+            pixels[
+                identify_simplex(np.array([x, y]), target, triangles.simplices)
+            ].append([x, y])
+    pixels = [np.array(row) for row in pixels]
+
+    srcs = [np.empty(2) for _ in range(N)]
+    dsts = [np.empty(2) for _ in range(N)]
+    for i in range(N):
+
+        def point_mat(points: np.ndarray) -> np.ndarray:
+            return np.vstack([points.T, np.ones(points.shape[0])])
+
+        # mid = points[triangles.simplices[i]]
+        # MID_TO_MENZEL = point_mat(menzel[triangles.simplices[i]]) @ np.linalg.inv(point_mat(mid))
+        # MID_TO_MUSCATO = point_mat(muscato[triangles.simplices[i]]) @ np.linalg.inv(point_mat(mid))
+        # TARGET_TO_MID = point_mat(mid) @ np.linalg.inv(point_mat(target[triangles.simplices[i]]))
+        # srcs[i] = MID_TO_MENZEL @ TARGET_TO_MID @ point_mat(pixels[i])
+        # dsts[i] = MID_TO_MUSCATO @ TARGET_TO_MID @ point_mat(pixels[i])
+
+        TARGET_TO_MENZEL = point_mat(menzel[triangles.simplices[i]]) @ np.linalg.inv(
+            point_mat(target[triangles.simplices[i]])
+        )
+        TARGET_TO_MUSCATO = point_mat(muscato[triangles.simplices[i]]) @ np.linalg.inv(
+            point_mat(target[triangles.simplices[i]])
+        )
+
+        assert len(pixels[i]) != 0
+
+        srcs[i] = TARGET_TO_MENZEL @ point_mat(pixels[i])
+        dsts[i] = TARGET_TO_MUSCATO @ point_mat(pixels[i])
+
+    plt.clf()
+    plt.axis((0, 1000, 1000, 0))
+    for src in srcs:
+        plt.scatter(src[0], src[1], s=5)
+    plt.savefig("out/inv_sample_menzel.png")
+    plt.show()
+
+    plt.clf()
+    plt.axis((0, 1000, 1000, 0))
+    for dst in dsts:
+        plt.scatter(dst[0], dst[1], s=5)
+    plt.savefig("out/inv_sample_muscato.png")
+    plt.show()
+
+
+def interpolate_pixel_color(img: np.ndarray, point: np.ndarray):
+    x = np.clip(point[0], 0, img.shape[0] - 2)
+    y = np.clip(point[1], 0, img.shape[1] - 2)
+
+    x1, y1 = np.floor(x).astype(int), np.floor(y).astype(int)
+    x2, y2 = x1 + 1, y1 + 1
+
+    color = np.array([0, 0, 0], dtype=np.float32)
+    color += (x2 - x) * (y2 - y) * img[x1, y1]
+    color += (x - x1) * (y2 - y) * img[x2, y1]
+    color += (x2 - x) * (y - y1) * img[x1, y2]
+    color += (x - x1) * (y - y1) * img[x2, y2]
+
+    return color
+
+
+def generate_frame(alpha: float):
+    menzel = extend_border(read_points("points/idina_menzel.csv"))
+    muscato = extend_border(read_points("points/jamie_muscato.csv"))
+    alpha = 0.5
+    target = (1 - alpha) * menzel + alpha * muscato
+
+    triangles = Delaunay((menzel + muscato) / 2)
+    N = len(triangles.simplices)
+
+    with Pool() as p:
+        labels = p.starmap(
+            identify_simplex,
+            [
+                (np.array([i, j]), target, triangles.simplices)
+                for i in range(1000)
+                for j in range(1000)
+            ],
+        )
+
+    labels = np.array(labels).reshape((1000, 1000))
+
+    pixels = [[] for _ in range(N)]
+    for x in range(1000):
+        for y in range(1000):
+            pixels[labels[x, y]].append([x, y])
+    pixels = [np.array(row) for row in pixels]
+
+    img = np.ones((1000, 1000, 3))
+    for i in range(N):
+
+        def point_mat(points: np.ndarray) -> np.ndarray:
+            return np.vstack([points.T, np.ones(points.shape[0])])
+
+        TARGET_TO_MENZEL = point_mat(menzel[triangles.simplices[i]]) @ np.linalg.inv(
+            point_mat(target[triangles.simplices[i]])
+        )
+        TARGET_TO_MUSCATO = point_mat(muscato[triangles.simplices[i]]) @ np.linalg.inv(
+            point_mat(target[triangles.simplices[i]])
+        )
+
+        assert len(pixels[i]) != 0
+
+        src = TARGET_TO_MENZEL @ point_mat(pixels[i])
+        dst = TARGET_TO_MUSCATO @ point_mat(pixels[i])
+        for j, pixel in enumerate(pixels[i]):
+            img[pixel[0], pixel[1]] = (1 - alpha) * interpolate_pixel_color(
+                MENZEL, src[[1, 0], j]
+            )
+            img[pixel[0], pixel[1]] += alpha * interpolate_pixel_color(
+                MUSCATO, dst[[1, 0], j]
+            )
+
+    img = img.transpose((1, 0, 2))
+
+    return img
+
+def run_inv_color_sample_frame():
+    plt.clf()
+    plt.axis((0, 1000, 1000, 0))
+    plt.imshow(numpy_to_image(generate_frame(0.5)))
+    plt.savefig(f"out/inv_sample_color.png")
+    plt.show()
+
+def run_generate_gif():
+    frames = []
+    for i, alpha in enumerate(np.linspace(0, 1, 10, endpoint=True)):
+        fname = f"out/final_transform/{i:03}.png"
+        frame = generate_frame(alpha)
+        frames.append(frame)
+        write_image(fname, frame)
+
+    write_gif("out/final_transform.gif", frames)
+
+
 if __name__ == "__main__":
     # run_naive_cross_fade()
     # run_draw_points()
@@ -223,4 +449,10 @@ if __name__ == "__main__":
     # run_draw_mesh("jamie_muscato", MUSCATO)
     # run_average_mesh()
     # run_triangle_transform()
-    run_calculate_simplex_per_pixel()
+    # run_calculate_simplex_per_pixel()
+    # run_transform_image()
+    # test_identify_simplex()
+    # run_inv_sample_frame()
+    # run_inv_color_sample_frame()
+    run_generate_gif()
+    print("EOF")
