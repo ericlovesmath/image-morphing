@@ -85,10 +85,12 @@ def interp_color(img: np.ndarray, point: np.ndarray):
     return color
 
 
-def extend_border(points: np.ndarray):
+def extend_border(points: np.ndarray, H: int, W: int):
     border = []
-    for i in np.linspace(0, 1000, 9):
-        border.extend([[0, i], [1000, 1000 - i], [1000 - i, 0], [i, 1000]])
+    for i in np.linspace(0, W, 9):
+        border.extend([[0, i], [1000, 1000 - i]])
+    for i in np.linspace(0, H, 9):
+        border.extend([[1000 - i, 0], [i, 1000]])
     return np.vstack([points, np.array(border)])
 
 
@@ -104,8 +106,8 @@ def generate_frame(
     assert np.shape(src_mesh) == np.shape(dst_mesh)
 
     H, W, _ = np.shape(src_img)
-    src_mesh = extend_border(src_mesh)
-    dst_mesh = extend_border(dst_mesh)
+    src_mesh = extend_border(src_mesh, H, W)
+    dst_mesh = extend_border(dst_mesh, H, W)
     target_mesh = (1 - alpha) * src_mesh + alpha * dst_mesh
 
     triangles = Delaunay((src_mesh + dst_mesh) / 2)
