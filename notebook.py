@@ -169,13 +169,20 @@ def run_triangle_transform():
 
     plt.axis((0, 8, 0, 8))
 
-    for alpha in np.linspace(0, 1, 100, endpoint=True):
+    imgs = []
+    for i, alpha in enumerate(np.linspace(0, 1, 100, endpoint=True)):
         points = (1 - alpha) * src_points + alpha * dst_points
         plt.clf()
         plt.triplot(src[:, 0], src[:, 1], [[0, 1, 2]])
         plt.triplot(dst[:, 0], dst[:, 1], [[0, 1, 2]])
         plt.scatter(points[0], points[1], color="r")
         plt.pause(0.5 if alpha == 0 or alpha == 1 else 0.02)
+
+        fname = f"out/single_triangle_transform/{i:03}.png"
+        plt.savefig(fname)
+        imgs.append(read_image(fname))
+
+    write_gif("out/single_triangle_transform.gif", imgs)
 
 
 def run_calculate_simplex_per_pixel():
@@ -448,11 +455,10 @@ if __name__ == "__main__":
     # run_draw_mesh("idina_menzel", MENZEL)
     # run_draw_mesh("jamie_muscato", MUSCATO)
     # run_average_mesh()
-    # run_triangle_transform()
+    run_triangle_transform()
     # run_calculate_simplex_per_pixel()
     # run_transform_image()
     # test_identify_simplex()
     # run_inv_sample_frame()
     # run_inv_color_sample_frame()
-    run_generate_gif()
-    print("EOF")
+    # run_generate_gif()

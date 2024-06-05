@@ -1,30 +1,35 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
 from multiprocessing import Pool
 from typing import List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.backend_bases import MouseButton
 from PIL import Image
 from scipy.spatial import Delaunay
 
 
-def read_points(path: str) -> np.ndarray:
+def read_mesh(path: str) -> np.ndarray:
     """Read array of points of an CSV, reading verticies"""
     return pd.read_csv(path, header=None).to_numpy()
 
 
 def read_image(path: str) -> np.ndarray:
-    """Read an image an array of linear RGB radiance values ∈ [0,1]"""
+    """Read an image an array of linear RGB radiance values in [0,1]"""
     return np.array(Image.open(path), dtype=np.float32) / 255
 
 
 def write_image(path: str, img: np.ndarray) -> None:
-    """Saves image from an array of linear RGB radiance values ∈ [0,1]"""
+    """Saves image from an array of linear RGB radiance values in [0,1]"""
     numpy_to_image(img).save(path)
 
 
 def write_gif(path: str, imgs: List[np.ndarray]) -> None:
-    """Saves gif from an array of linear RGB radiance values ∈ [0,1]"""
+    """Saves gif from an array of linear RGB radiance values in [0,1]"""
     head, *tail = [numpy_to_image(img) for img in imgs]
     head.save(path, save_all=True, append_images=tail, duration=5)
 
@@ -42,13 +47,6 @@ def resize(img: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
             for chan in img.transpose(2, 0, 1)
         ]
     )
-
-
-def extend_border(points: np.ndarray):
-    border = []
-    for i in np.linspace(0, 1000, 9):
-        border.extend([[0, i], [1000, 1000 - i], [1000 - i, 0], [i, 1000]])
-    return np.vstack([points, np.array(border)])
 
 
 def point_in_simplex(p: np.ndarray, simplex: np.ndarray):
@@ -97,6 +95,13 @@ def interp_color(img: np.ndarray, point: np.ndarray):
     return color
 
 
+def extend_border(points: np.ndarray):
+    border = []
+    for i in np.linspace(0, 1000, 9):
+        border.extend([[0, i], [1000, 1000 - i], [1000 - i, 0], [i, 1000]])
+    return np.vstack([points, np.array(border)])
+
+
 def generate_frame(
     src_img: np.ndarray,
     dst_img: np.ndarray,
@@ -104,6 +109,10 @@ def generate_frame(
     dst_mesh: np.ndarray,
     alpha: float,
 ):
+    assert np.shape(src_img) == np.shape(dst_img)
+    assert np.shape(src_mesh) == np.shape(dst_mesh)
+
+    H, W, _ = np.shape(src_img)
     src_mesh = extend_border(src_mesh)
     dst_mesh = extend_border(dst_mesh)
     target_mesh = (1 - alpha) * src_mesh + alpha * dst_mesh
@@ -116,31 +125,31 @@ def generate_frame(
             identify_simplex,
             [
                 (np.array([i, j]), target_mesh, triangles.simplices)
-                for i in range(1000)
-                for j in range(1000)
+                for i in range(H)
+                for j in range(W)
             ],
         )
-        labels = np.array(labels).reshape((1000, 1000))
+        labels = np.array(labels).reshape((H, W))
 
-    pixels = [[] for _ in range(N)]
-    for x in range(1000):
-        for y in range(1000):
-            pixels[labels[x, y]].append([x, y])
-    pixels = [np.array(row) for row in pixels]
+    simplex_to_pixels = [[] for _ in range(N)]
+    for x in range(H):
+        for y in range(W):
+            simplex_to_pixels[labels[x, y]].append([x, y])
+    simplex_to_pixels = [np.array(row) for row in simplex_to_pixels]
 
-    point_mat = lambda points: np.vstack([points.T, np.ones(points.shape[0])])
-    img = np.zeros((1000, 1000, 3))
+    mat = lambda points: np.vstack([points.T, np.ones(points.shape[0])])
+    img = np.zeros((H, W, 3))
     for i in range(N):
-        if len(pixels[i]) == 0:
+        if len(simplex_to_pixels[i]) == 0:
             continue
 
-        from_target = np.linalg.inv(point_mat(target_mesh[triangles.simplices[i]]))
-        to_src = point_mat(src_mesh[triangles.simplices[i]])
-        to_dst = point_mat(dst_mesh[triangles.simplices[i]])
-        src = to_src @ from_target @ point_mat(pixels[i])
-        dst = to_dst @ from_target @ point_mat(pixels[i])
+        from_target = np.linalg.inv(mat(target_mesh[triangles.simplices[i]]))
+        to_src = mat(src_mesh[triangles.simplices[i]])
+        to_dst = mat(dst_mesh[triangles.simplices[i]])
+        src = to_src @ from_target @ mat(simplex_to_pixels[i])
+        dst = to_dst @ from_target @ mat(simplex_to_pixels[i])
 
-        for j, pixel in enumerate(pixels[i]):
+        for j, pixel in enumerate(simplex_to_pixels[i]):
             src_color = interp_color(src_img, src[[1, 0], j])
             dst_color = interp_color(dst_img, dst[[1, 0], j])
             img[*pixel] = (1 - alpha) * src_color + alpha * dst_color
@@ -148,15 +157,88 @@ def generate_frame(
     return img.transpose((1, 0, 2))
 
 
-if __name__ == "__main__":
-    src_img = resize(read_image("imgs/idina_menzel.png"), (1000, 1000))
-    dst_img = resize(read_image("imgs/jamie_muscato.png"), (1000, 1000))
-    src_mesh = read_points("points/idina_menzel.csv")
-    dst_mesh = read_points("points/jamie_muscato.csv")
-    frame = generate_frame(src_img, dst_img, src_mesh, dst_mesh, 0.5)
+def generate_gif(
+    src_img: np.ndarray,
+    dst_img: np.ndarray,
+    src_mesh: np.ndarray,
+    dst_mesh: np.ndarray,
+    nframes: int,
+    fname: str,
+):
+    if not os.path.exists("frames"):
+        raise SystemExit("Error: local folder 'frames' missing")
 
-    plt.clf()
-    plt.axis((0, 1000, 1000, 0))
-    plt.imshow(numpy_to_image(frame))
-    plt.savefig("out/inv_sample_color.png")
+    frames = []
+    for i, alpha in enumerate(np.linspace(0, 1, nframes, endpoint=True)):
+        print(f"Generating frame {i + 1}/{nframes}...")
+        frame = generate_frame(src_img, dst_img, src_mesh, dst_mesh, alpha)
+        frames.append(frame)
+        write_image(f"frames/{fname}_{i:03}.png", frame)
+    print(f"Generating {fname}.gif...")
+    write_gif(f"{fname}.gif", frames)
+
+
+def select_mesh(img: np.ndarray, path: str):
+    points = []
+
+    def on_click(event):
+        if event.button is MouseButton.LEFT and event.inaxes:
+            plt.scatter(event.xdata, event.ydata, color="red")
+            points.append([event.xdata, event.ydata])
+            plt.draw()
+
+    plt.imshow(numpy_to_image(img))
+    plt.connect("button_press_event", on_click)
     plt.show()
+
+    np.savetxt(path, np.array(points), delimiter=",")
+
+
+def select_meshes():
+    src_img = read_image("imgs/idina_menzel.png")
+    dst_img = read_image("imgs/jamie_muscato.png")
+    src_mesh = "meshes/TEST1.csv"
+    dst_mesh = "meshes/TEST2.csv"
+    select_mesh(src_img, src_mesh)
+    select_mesh(dst_img, dst_mesh)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Draw meshes and interpolate images.")
+    parser.add_argument(
+        "src_img",
+        help="Path to image used as source",
+    )
+    parser.add_argument(
+        "dst_img",
+        help="Path to image used as destination",
+    )
+    parser.add_argument(
+        "src_mesh",
+        help="Path to mesh corresponding to src_img",
+    )
+    parser.add_argument(
+        "dst_mesh",
+        help="Path to mesh corresponding to dst_img",
+    )
+    parser.add_argument(
+        "--nframes",
+        default=10,
+        type=int,
+        help="Number of frames to generate (default: 10)",
+    )
+    parser.add_argument("--fname", default="result", help="Name of generated gif")
+
+    args = parser.parse_args()
+
+    src_img = read_image(args.src_img)
+    dst_img = read_image(args.dst_img)
+    src_mesh = read_mesh(args.src_mesh)
+    dst_mesh = read_mesh(args.dst_mesh)
+    # src_img = read_image("imgs/idina_menzel.png")
+    # dst_img = read_image("imgs/jamie_muscato.png")
+    # src_mesh = read_mesh("meshes/idina_menzel.csv")
+    # dst_mesh = read_mesh("meshes/jamie_muscato.csv")
+
+    generate_gif(src_img, dst_img, src_mesh, dst_mesh, args.nframes, args.fname)
+    # select_meshes()
