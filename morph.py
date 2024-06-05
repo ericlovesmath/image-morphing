@@ -3,7 +3,7 @@
 import argparse
 import os
 from multiprocessing import Pool
-from typing import List, Tuple
+from typing import List
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -37,16 +37,6 @@ def write_gif(path: str, imgs: List[np.ndarray]) -> None:
 def numpy_to_image(img: np.ndarray) -> Image.Image:
     """Converts RGB numpy image to PIL image"""
     return Image.fromarray(np.uint8(255 * img.clip(0, 1)))
-
-
-def resize(img: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
-    """Resize image to (height, width) using bicubic interpolation."""
-    return np.dstack(
-        [
-            np.array(Image.fromarray(chan).resize((size[1], size[0]), Image.BICUBIC))
-            for chan in img.transpose(2, 0, 1)
-        ]
-    )
 
 
 def point_in_simplex(p: np.ndarray, simplex: np.ndarray):
@@ -108,6 +98,7 @@ def generate_frame(
     src_mesh: np.ndarray,
     dst_mesh: np.ndarray,
     alpha: float,
+    sample: bool = True,
 ):
     assert np.shape(src_img) == np.shape(dst_img)
     assert np.shape(src_mesh) == np.shape(dst_mesh)
@@ -151,8 +142,11 @@ def generate_frame(
 
         for j, pixel in enumerate(simplex_to_pixels[i]):
             src_color = interp_color(src_img, src[[1, 0], j])
-            dst_color = interp_color(dst_img, dst[[1, 0], j])
-            img[*pixel] = (1 - alpha) * src_color + alpha * dst_color
+            if sample:
+                dst_color = interp_color(dst_img, dst[[1, 0], j])
+                img[*pixel] = (1 - alpha) * src_color + alpha * dst_color
+            else:
+                img[*pixel] = src_color
 
     return img.transpose((1, 0, 2))
 
@@ -164,6 +158,7 @@ def generate_gif(
     dst_mesh: np.ndarray,
     nframes: int,
     fname: str,
+    sample: bool = True,
 ):
     if not os.path.exists("frames"):
         raise SystemExit("Error: local folder 'frames' missing")
@@ -171,7 +166,7 @@ def generate_gif(
     frames = []
     for i, alpha in enumerate(np.linspace(0, 1, nframes, endpoint=True)):
         print(f"Generating frame {i + 1}/{nframes}...")
-        frame = generate_frame(src_img, dst_img, src_mesh, dst_mesh, alpha)
+        frame = generate_frame(src_img, dst_img, src_mesh, dst_mesh, alpha, sample)
         frames.append(frame)
         write_image(f"frames/{fname}_{i:03}.png", frame)
     print(f"Generating {fname}.gif...")
@@ -194,17 +189,11 @@ def select_mesh(img: np.ndarray, path: str):
     np.savetxt(path, np.array(points), delimiter=",")
 
 
-def select_meshes():
-    src_img = read_image("imgs/idina_menzel.png")
-    dst_img = read_image("imgs/jamie_muscato.png")
-    src_mesh = "meshes/TEST1.csv"
-    dst_mesh = "meshes/TEST2.csv"
-    select_mesh(src_img, src_mesh)
-    select_mesh(dst_img, dst_mesh)
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Draw meshes and interpolate images.")
+    parser = argparse.ArgumentParser(
+        description="Draw meshes and interpolate images.",
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
     parser.add_argument(
         "src_img",
         help="Path to image used as source",
@@ -222,23 +211,39 @@ if __name__ == "__main__":
         help="Path to mesh corresponding to dst_img",
     )
     parser.add_argument(
+        "--task",
+        choices=["interp_images", "interp_meshes", "draw_mesh"],
+        default="interp_images",
+        help="""interp_images: Interpolate between images (default).
+interp_meshes: Ignore dst_img and sample interpolation from only
+               src_img, effectively animating the image.
+draw_mesh: Select points on image to draw mesh, ignores dst_* args. """,
+    )
+    parser.add_argument(
         "--nframes",
         default=10,
         type=int,
         help="Number of frames to generate (default: 10)",
     )
-    parser.add_argument("--fname", default="result", help="Name of generated gif")
+    parser.add_argument(
+        "--fname",
+        default="result",
+        help="Name of generated gif and frames (default: 'result')",
+    )
 
     args = parser.parse_args()
 
-    src_img = read_image(args.src_img)
-    dst_img = read_image(args.dst_img)
-    src_mesh = read_mesh(args.src_mesh)
-    dst_mesh = read_mesh(args.dst_mesh)
-    # src_img = read_image("imgs/idina_menzel.png")
-    # dst_img = read_image("imgs/jamie_muscato.png")
-    # src_mesh = read_mesh("meshes/idina_menzel.csv")
-    # dst_mesh = read_mesh("meshes/jamie_muscato.csv")
+    if args.task == "draw_mesh":
+        select_mesh(read_image(args.src_img), args.src_mesh)
+    else:
+        src_img = read_image(args.src_img)
+        src_mesh = read_mesh(args.src_mesh)
+        dst_mesh = read_mesh(args.dst_mesh)
+        nframes = args.nframes
+        fname = args.fname
 
-    generate_gif(src_img, dst_img, src_mesh, dst_mesh, args.nframes, args.fname)
-    # select_meshes()
+        if args.task == "interp_images":
+            dst_img = read_image(args.dst_img)
+            generate_gif(src_img, dst_img, src_mesh, dst_mesh, nframes, fname)
+        elif args.task == "interp_meshes":
+            generate_gif(src_img, src_img, src_mesh, dst_mesh, nframes, fname, False)
