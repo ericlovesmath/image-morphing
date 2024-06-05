@@ -1,3 +1,6 @@
+# Example usage
+# File paths may be different from examples
+
 ./morph.py imgs/idina_menzel.png imgs/jamie_muscato.png meshes/idina_menzel.csv meshes/jamie_muscato.csv --nframes 40
 ./morph.py imgs/idina_menzel.png imgs/jamie_muscato.png meshes/idina_menzel.csv meshes/jamie_muscato.csv --nframes 40 --task intrep_meshes
 
