@@ -1,5 +1,7 @@
 # Image Morphing
 
+Final project for CS/EE 166 (Computational Cameras)
+
 ![Cat Morphing](output/blep.gif)
 
 ## Usage
