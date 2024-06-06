@@ -2,6 +2,8 @@
 
 Final project for CS/EE 166 (Computational Cameras)
 
+Presentation Link: [https://www.youtube.com/watch?v=Ul1cwGuRIn8](https://www.youtube.com/watch?v=Ul1cwGuRIn8)
+
 ![Cat Morphing](output/blep.gif)
 
 ## Usage
